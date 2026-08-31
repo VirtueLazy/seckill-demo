@@ -5,42 +5,73 @@ import com.example.seckilldemo.config.RabbitMQConfig;
 import com.example.seckilldemo.dto.SeckillMessage;
 import com.example.seckilldemo.entity.SeckillActivity;
 import com.example.seckilldemo.entity.SeckillOrder;
+import com.example.seckilldemo.exception.DuplicateOrderException;
 import com.example.seckilldemo.mapper.SeckillActivityMapper;
 import com.example.seckilldemo.mapper.SeckillOrderMapper;
+import com.rabbitmq.client.Channel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.amqp.support.AmqpHeaders;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.io.IOException;
 
 @Slf4j
 @Component
 public class SeckillConsumer {
-    @Autowired
-    private SeckillActivityMapper seckillActivityMapper;
+    private final SeckillActivityMapper seckillActivityMapper;
+    private final SeckillOrderMapper seckillOrderMapper;
+    private final TransactionTemplate transactionTemplate;
 
-    @Autowired
-    private SeckillOrderMapper seckillOrderMapper;
+    public SeckillConsumer(SeckillActivityMapper seckillActivityMapper,
+                           SeckillOrderMapper seckillOrderMapper,
+                           PlatformTransactionManager transactionManager) {
+        this.seckillActivityMapper = seckillActivityMapper;
+        this.seckillOrderMapper = seckillOrderMapper;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+    }
 
-    @Transactional
     @RabbitListener(queues = RabbitMQConfig.SECKILL_QUEUE)
-    public void handleSeckillMessage(SeckillMessage message) {
+    public void handleSeckillMessage(SeckillMessage message, Channel channel,
+                                     @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) throws IOException {
+        try {
+            // 数据库操作放独立事务：事务提交成功后才 ACK，避免"先确认后回滚"导致丢消息
+            transactionTemplate.execute(status -> {
+                createOrder(message);
+                return null;
+            });
+            channel.basicAck(deliveryTag, false);
+            log.info("订单生成成功：userId={}", message.getUserId());
+        } catch (DuplicateOrderException e) {
+            // 重复订单是"业务上已成功"：ACK 掉，不重试
+            log.warn("重复订单，视为已处理：userId={}，activityId={}", message.getUserId(), message.getActivityId());
+            channel.basicAck(deliveryTag, false);
+        } catch (Exception e) {
+            // 真正的失败：不重投原队列（避免死循环），转投死信队列人工排查
+            log.error("消息处理失败，进入死信队列：userId={}，activityId={}", message.getUserId(), message.getActivityId(), e);
+            channel.basicNack(deliveryTag, false, false);
+        }
+    }
 
-        // 幂等检查：同一个人同一活动已有订单，直接跳过（防止重复消费）
+    private void createOrder(SeckillMessage message) {
+        // 快路径：先查订单是否存在，避免大部分重复消息走异常分支
         Long existingCount = seckillOrderMapper.selectCount(
                 new LambdaQueryWrapper<SeckillOrder>()
                         .eq(SeckillOrder::getSeckillActivityId, message.getActivityId())
                         .eq(SeckillOrder::getUserId, message.getUserId()));
         if (existingCount > 0) {
-            log.info("订单已存在，跳过重复消息：userId={}", message.getUserId());
-            return;
+            throw new DuplicateOrderException("订单已存在");
         }
 
-        // CAS 扣库存：只扣还有库存的，返回 0 说明库存没了
+        // CAS 扣库存：只扣还有库存的
         int rows = seckillActivityMapper.deductStock(message.getActivityId());
         if (rows == 0) {
-            log.warn("数据库库存不足，消息处理失败：userId={}", message.getUserId());
-            return;
+            // Redis 与 DB 库存不一致才会走到这里，属于异常情况，进死信告警
+            throw new IllegalStateException("数据库库存不足");
         }
 
         SeckillActivity activity = seckillActivityMapper.selectById(message.getActivityId());
@@ -50,10 +81,19 @@ public class SeckillConsumer {
         order.setUserId(message.getUserId());
         order.setProductId(activity.getProductId());
         order.setSeckillPrice(activity.getSeckillPrice());
-        // 若这里撞上唯一索引（并发重复），抛 DuplicateKeyException
-        // -> @Transactional 会把整个事务（含扣库存）全部回滚，不会出现"扣了库存没订单"
-        seckillOrderMapper.insert(order);
+        try {
+            seckillOrderMapper.insert(order);
+        } catch (DuplicateKeyException e) {
+            // 唯一索引兜底：两个重复消息并发时，后到者插入失败
+            throw new DuplicateOrderException("唯一索引拦截到重复订单");
+        }
+    }
 
-        log.info("订单生成成功：userId={}", message.getUserId());
+    // 死信队列监听：留痕，供人工处理
+    @RabbitListener(queues = RabbitMQConfig.SECKILL_DLQ)
+    public void handleDeadLetter(SeckillMessage message, Channel channel,
+                                 @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) throws IOException {
+        log.error("死信队列收到消息，需人工处理：userId={}，activityId={}", message.getUserId(), message.getActivityId());
+        channel.basicAck(deliveryTag, false);
     }
 }

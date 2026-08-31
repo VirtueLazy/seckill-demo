@@ -17,6 +17,14 @@ spring:
     port: 5672
     username: admin
     password: admin123
+    # 发布确认：Broker 收到消息后回调生产者，能感知"消息到底到没到"
+    publisher-confirm-type: correlated
+    # 路由失败回调：消息发到交换机但没匹配到队列时退还生产者
+    publisher-returns: true
+    listener:
+      simple:
+        # 手动 ACK：处理成功才确认，失败进死信队列
+        acknowledge-mode: manual
 
 
 #mybatis-plus配置
