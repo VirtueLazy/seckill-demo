@@ -5,9 +5,10 @@ import com.example.seckilldemo.dto.SeckillMessage;
 import com.example.seckilldemo.entity.SeckillActivity;
 import com.example.seckilldemo.mapper.SeckillActivityMapper;
 import com.example.seckilldemo.service.SeckillService;
+import com.example.seckilldemo.exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
@@ -47,7 +48,7 @@ public class SeckillServiceImpl implements SeckillService {
     public void preloadStock(Long activityId) {
         SeckillActivity activity = seckillActivityMapper.selectById(activityId);
         if (activity == null) {
-            throw new RuntimeException("秒杀活动不存在");
+            throw new BusinessException("秒杀活动不存在");
         }
 
         // 库存预热到 Redis，秒杀请求不再打 DB
@@ -73,7 +74,7 @@ public class SeckillServiceImpl implements SeckillService {
         String limitKey = LIMIT_KEY + userId;
         Long allowed = stringRedisTemplate.execute(rateLimitScript, Collections.singletonList(limitKey), "1", "1");
         if (allowed == null || allowed == 0) {
-            throw new RuntimeException("请求过于频繁，请稍后再试");
+            throw new BusinessException("请求过于频繁，请稍后再试");
         }
 
         String stockKey = STOCK_KEY + activityId;
@@ -84,7 +85,7 @@ public class SeckillServiceImpl implements SeckillService {
         String startEpoch = (String) window.get("start");
         String endEpoch = (String) window.get("end");
         if (startEpoch == null || endEpoch == null) {
-            throw new RuntimeException("秒杀活动未预热");
+            throw new BusinessException("秒杀活动未预热");
         }
 
         // 当前时间由应用传入，避免依赖 Redis 的 os 库（部分环境 strict Lua 禁用它）
@@ -95,22 +96,24 @@ public class SeckillServiceImpl implements SeckillService {
                 String.valueOf(userId), startEpoch, endEpoch, String.valueOf(nowEpoch));
 
         if (result == null) {
-            throw new RuntimeException("秒杀执行异常");
+            throw new IllegalStateException("秒杀执行异常");
         }
         switch (result.intValue()) {
-            case -5 -> throw new RuntimeException("秒杀活动已结束");
-            case -4 -> throw new RuntimeException("秒杀活动尚未开始");
-            case -3 -> throw new RuntimeException("您已经参与过本次秒杀，请勿重复购买");
-            case -2 -> throw new RuntimeException("秒杀尚未开始（库存未预热）");
-            case -1 -> throw new RuntimeException("库存不足，秒杀失败");
+            case -5 -> throw new BusinessException("秒杀活动已结束");
+            case -4 -> throw new BusinessException("秒杀活动尚未开始");
+            case -3 -> throw new BusinessException("您已经参与过本次秒杀，请勿重复购买");
+            case -2 -> throw new BusinessException("秒杀尚未开始（库存未预热）");
+            case -1 -> throw new BusinessException("库存不足，秒杀失败");
         }
 
         // 购买记录集合设 7 天过期，防止 Redis 内存无限增长
         stringRedisTemplate.expire(purchasedSetKey, 7, TimeUnit.DAYS);
 
-        // 异步落库：发消息到 MQ，消费者负责扣 DB 库存 + 建订单
-        SeckillMessage message = new SeckillMessage(activityId, userId);
-        rabbitTemplate.convertAndSend(RabbitMQConfig.SECKILL_EXCHANGE, RabbitMQConfig.SECKILL_ROUTING_KEY, message);
+        // 接口只完成 Redis 裁决和消息发送，订单由消费者异步落库。
+        rabbitTemplate.convertAndSend(
+                RabbitMQConfig.SECKILL_EXCHANGE,
+                RabbitMQConfig.SECKILL_ROUTING_KEY,
+                new SeckillMessage(activityId, userId));
         return true;
     }
 }

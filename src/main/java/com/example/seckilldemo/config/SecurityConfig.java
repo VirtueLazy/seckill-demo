@@ -12,6 +12,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.http.HttpMethod;
 
 @Configuration
 @EnableWebSecurity
@@ -34,6 +35,10 @@ public class SecurityConfig {
              .sessionManagement(session->session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
              .authorizeHttpRequests(auth->auth
                  .requestMatchers("/api/user/register","/api/user/login","/api/test/redis").permitAll()
+                 .requestMatchers("/api/seckill/preload/**").hasRole("ADMIN")
+                 .requestMatchers(HttpMethod.POST, "/api/product/add").hasRole("ADMIN")
+                 .requestMatchers(HttpMethod.PUT, "/api/product/**").hasRole("ADMIN")
+                 .requestMatchers(HttpMethod.DELETE, "/api/product/**").hasRole("ADMIN")
                  .anyRequest().authenticated()
              )
                 .exceptionHandling(ex->ex.authenticationEntryPoint(jwtAuthenticationEntryPoint))

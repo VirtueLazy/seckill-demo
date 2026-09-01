@@ -4,6 +4,7 @@ import com.example.seckilldemo.entity.User;
 import com.example.seckilldemo.mapper.UserMapper;
 import com.example.seckilldemo.service.UserService;
 import com.example.seckilldemo.util.JwtUtil;
+import com.example.seckilldemo.exception.BusinessException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -23,12 +24,13 @@ public class UserServiceImpl implements UserService {
     public boolean register(String username, String password, String nickname) {
         User existuser = userMapper.selectByUsername(username);
         if (existuser != null) {
-            throw new RuntimeException("用户名已存在");
+            throw new BusinessException("用户名已存在");
         }
         User user = new User();
         user.setUsername(username);
         user.setPassword(passwordEncoder.encode(password));
         user.setNickname(nickname);
+        user.setRole("USER");
 
         return userMapper.insert(user) > 0;
     }
@@ -37,13 +39,14 @@ public class UserServiceImpl implements UserService {
     public String login(String username, String password) {
         User user = userMapper.selectByUsername(username);
         if(user == null){
-            throw new RuntimeException("用户不存在");
+            throw new BusinessException("用户不存在");
         }
 
         if(!passwordEncoder.matches(password,user.getPassword())){
-            throw new RuntimeException("密码错误");
+            throw new BusinessException("密码错误");
         }
 
-        return jwtUtil.generateToken(user.getId(),user.getUsername());
+        String role = user.getRole() == null ? "USER" : user.getRole();
+        return jwtUtil.generateToken(user.getId(), user.getUsername(), role);
     }
 }

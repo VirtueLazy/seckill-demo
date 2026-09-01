@@ -2,21 +2,21 @@ spring:
   application:
     name: seckill-demo
   datasource:
-    url: jdbc:mysql://localhost:3306/seckill_demo?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    url: ${DB_URL:jdbc:mysql://localhost:3306/seckill_demo?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
     driver-class-name: com.mysql.cj.jdbc.Driver
-    username: root
-    password: 123456
+    username: ${DB_USERNAME:seckill}
+    password: ${DB_PASSWORD:seckill_dev_password}
   data:
     redis:
-      host: 192.168.126.128
-      port: 6379
-      password: 123456
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
       timeout: 5000ms
   rabbitmq:
-    host: 192.168.126.128
-    port: 5672
-    username: admin
-    password: admin123
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:seckill}
+    password: ${RABBITMQ_PASSWORD:seckill_dev_password}
     # 发布确认：Broker 收到消息后回调生产者，能感知"消息到底到没到"
     publisher-confirm-type: correlated
     # 路由失败回调：消息发到交换机但没匹配到队列时退还生产者
@@ -31,6 +31,8 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 
+security:
+  jwt:
+    secret: ${JWT_SECRET:change-this-development-secret-to-at-least-32-bytes}
 

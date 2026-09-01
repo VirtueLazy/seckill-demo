@@ -1,7 +1,5 @@
 package com.example.seckilldemo.controller;
 
-import com.example.seckilldemo.mapper.SeckillActivityMapper;
-import com.example.seckilldemo.mapper.SeckillOrderMapper;
 import com.example.seckilldemo.security.AuthenticatedUser;
 import com.example.seckilldemo.service.SeckillService;
 import org.springframework.beans.factory.annotation.Autowired;

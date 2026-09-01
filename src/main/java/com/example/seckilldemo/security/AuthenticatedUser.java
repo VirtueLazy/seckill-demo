@@ -1,5 +1,5 @@
 package com.example.seckilldemo.security;
 
-public record AuthenticatedUser(Long id, String username) {
+public record AuthenticatedUser(Long id, String username, String role) {
 
 }

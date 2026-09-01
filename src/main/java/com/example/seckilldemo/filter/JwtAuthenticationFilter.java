@@ -16,6 +16,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.Collections;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -33,11 +34,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 Claims claims = jwtUtil.parseToken(token);
                 Long userId = claims.get("userId", Long.class);
                 String username = claims.get("username", String.class);
+                String role = claims.get("role", String.class);
 
                 AuthenticatedUser authenticatedUser =
-                        new AuthenticatedUser(userId, username);
+                        new AuthenticatedUser(userId, username, role);
                 UsernamePasswordAuthenticationToken authentication =
-                        new UsernamePasswordAuthenticationToken(authenticatedUser, null, Collections.emptyList());
+                        new UsernamePasswordAuthenticationToken(
+                                authenticatedUser,
+                                null,
+                                Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + role)));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (JwtException e) {
                 // token 非法/过期：不设置认证，后续由 AuthenticationEntryPoint 返回 401

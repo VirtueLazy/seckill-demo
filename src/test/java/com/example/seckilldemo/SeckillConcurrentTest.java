@@ -66,7 +66,7 @@ public class SeckillConcurrentTest {
                             .build();
                     HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
                     JsonNode body = mapper.readTree(response.body());
-                    // 成功响应是裸 true，失败响应是 {code:400, message:"..."}，两种都要兼容
+                    // 成功响应是裸 true，失败响应是 {code:400, message:"..."}。
                     String message = body.path("message").asText();
                     if (body.isBoolean() && body.asBoolean()) {
                         success.incrementAndGet();
@@ -92,7 +92,7 @@ public class SeckillConcurrentTest {
         System.out.println("===== 压测结果 =====");
         System.out.println("并发用户数: " + USER_COUNT);
         System.out.println("总耗时: " + cost + " ms");
-        System.out.println("抢购成功: " + success.get());
+        System.out.println("抢购请求成功: " + success.get());
         System.out.println("重复购买拦截: " + repeat.get());
         System.out.println("库存不足: " + soldOut.get());
         System.out.println("其他: " + other.get());
@@ -108,7 +108,7 @@ public class SeckillConcurrentTest {
             System.exit(1);
         }
         System.out.println("PASS: 成功数 " + success.get() + " <= 库存 " + EXPECTED_STOCK
-                + "。请再登录 MySQL 确认 seckill_order 表订单数 == " + success.get());
+                + "。请等待异步消费后确认订单数 == " + success.get());
     }
 
     private static void register(HttpClient client, ObjectMapper mapper, String username, String password) throws Exception {

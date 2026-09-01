@@ -93,7 +93,8 @@ public class SeckillConsumer {
     @RabbitListener(queues = RabbitMQConfig.SECKILL_DLQ)
     public void handleDeadLetter(SeckillMessage message, Channel channel,
                                  @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) throws IOException {
-        log.error("死信队列收到消息，需人工处理：userId={}，activityId={}", message.getUserId(), message.getActivityId());
+        log.error("死信队列收到消息，需人工处理：userId={}，activityId={}",
+                message.getUserId(), message.getActivityId());
         channel.basicAck(deliveryTag, false);
     }
 }
