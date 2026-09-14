@@ -4,6 +4,8 @@ import com.example.seckilldemo.config.RabbitMQConfig;
 import com.example.seckilldemo.dto.SeckillMessage;
 import com.example.seckilldemo.entity.SeckillActivity;
 import com.example.seckilldemo.mapper.SeckillActivityMapper;
+import com.example.seckilldemo.mq.SeckillCorrelationData;
+import com.example.seckilldemo.service.SeckillReservationCompensator;
 import com.example.seckilldemo.service.SeckillService;
 import com.example.seckilldemo.exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +45,9 @@ public class SeckillServiceImpl implements SeckillService {
 
     @Autowired
     private RedisScript<Long> rateLimitScript;
+
+    @Autowired
+    private SeckillReservationCompensator reservationCompensator;
 
     @Override
     public void preloadStock(Long activityId) {
@@ -110,10 +115,30 @@ public class SeckillServiceImpl implements SeckillService {
         stringRedisTemplate.expire(purchasedSetKey, 7, TimeUnit.DAYS);
 
         // 接口只完成 Redis 裁决和消息发送，订单由消费者异步落库。
-        rabbitTemplate.convertAndSend(
-                RabbitMQConfig.SECKILL_EXCHANGE,
-                RabbitMQConfig.SECKILL_ROUTING_KEY,
-                new SeckillMessage(activityId, userId));
+        SeckillCorrelationData correlationData = new SeckillCorrelationData(activityId, userId);
+        try {
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.SECKILL_EXCHANGE,
+                    RabbitMQConfig.SECKILL_ROUTING_KEY,
+                    new SeckillMessage(activityId, userId),
+                    message -> {
+                        message.getMessageProperties().setHeader(
+                                SeckillCorrelationData.HEADER_ACTIVITY_ID, activityId);
+                        message.getMessageProperties().setHeader(
+                                SeckillCorrelationData.HEADER_USER_ID, userId);
+                        return message;
+                    },
+                    correlationData);
+        } catch (RuntimeException publishFailure) {
+            // convertAndSend 在消息交给客户端前直接失败时，立即撤销 Redis 预约。
+            // Broker 已接收但连接中断的极端歧义场景仍需要后续对账处理。
+            try {
+                reservationCompensator.compensate(activityId, userId, "publish-exception");
+            } catch (RuntimeException compensationFailure) {
+                publishFailure.addSuppressed(compensationFailure);
+            }
+            throw new BusinessException("秒杀请求暂未受理，请稍后重试", publishFailure);
+        }
         return true;
     }
 }
