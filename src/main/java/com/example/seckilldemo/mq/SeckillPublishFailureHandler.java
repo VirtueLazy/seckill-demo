@@ -27,8 +27,13 @@ public class SeckillPublishFailureHandler
         }
 
         if (correlationData instanceof SeckillCorrelationData seckillData) {
-            compensateSafely(seckillData.getActivityId(), seckillData.getUserId(),
-                    "broker-nack: " + cause);
+            if (seckillData.isCompensateOnFailure()) {
+                compensateSafely(seckillData.getActivityId(), seckillData.getUserId(),
+                        "broker-nack: " + cause);
+            } else {
+                log.error("死信重放消息被 Broker NACK，保留待处理记录：activityId={}，userId={}，原因={}",
+                        seckillData.getActivityId(), seckillData.getUserId(), cause);
+            }
             return;
         }
         log.error("消息发送到交换机失败但缺少秒杀关联信息，correlationData={}，原因={}", correlationData, cause);
@@ -39,8 +44,15 @@ public class SeckillPublishFailureHandler
         Map<String, Object> headers = returned.getMessage().getMessageProperties().getHeaders();
         Long activityId = asLong(headers.get(SeckillCorrelationData.HEADER_ACTIVITY_ID));
         Long userId = asLong(headers.get(SeckillCorrelationData.HEADER_USER_ID));
+        boolean compensateOnFailure = asBoolean(
+                headers.get(SeckillCorrelationData.HEADER_COMPENSATE_ON_FAILURE), true);
         if (activityId != null && userId != null) {
-            compensateSafely(activityId, userId, "unroutable: " + returned.getReplyText());
+            if (compensateOnFailure) {
+                compensateSafely(activityId, userId, "unroutable: " + returned.getReplyText());
+            } else {
+                log.error("死信重放消息无法路由，保留待处理记录：activityId={}，userId={}，replyText={}",
+                        activityId, userId, returned.getReplyText());
+            }
         } else {
             log.error("消息路由失败但缺少补偿信息：exchange={}，routingKey={}，replyText={}",
                     returned.getExchange(), returned.getRoutingKey(), returned.getReplyText());
@@ -68,5 +80,15 @@ public class SeckillPublishFailureHandler
             }
         }
         return null;
+    }
+
+    private boolean asBoolean(Object value, boolean defaultValue) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof String text) {
+            return Boolean.parseBoolean(text);
+        }
+        return defaultValue;
     }
 }

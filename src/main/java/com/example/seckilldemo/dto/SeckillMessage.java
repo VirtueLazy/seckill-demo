@@ -12,4 +12,9 @@ import java.io.Serializable;
 public class SeckillMessage implements Serializable {
     private Long activityId;
     private Long userId;
+    private Long failedMessageId;
+
+    public SeckillMessage(Long activityId, Long userId) {
+        this(activityId, userId, null);
+    }
 }

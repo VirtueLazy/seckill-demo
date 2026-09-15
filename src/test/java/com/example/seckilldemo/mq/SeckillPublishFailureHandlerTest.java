@@ -31,6 +31,13 @@ class SeckillPublishFailureHandlerTest {
     }
 
     @Test
+    void replayNackKeepsPendingRecordWithoutReleasingReservation() {
+        handler.confirm(new SeckillCorrelationData(1L, 2L, false), false, "broker unavailable");
+
+        verify(compensator, never()).compensate(1L, 2L, "broker-nack: broker unavailable");
+    }
+
+    @Test
     void unroutableMessageTriggersCompensationFromHeaders() {
         MessageProperties properties = new MessageProperties();
         properties.setHeader(SeckillCorrelationData.HEADER_ACTIVITY_ID, 3L);
@@ -45,5 +52,23 @@ class SeckillPublishFailureHandlerTest {
         handler.returnedMessage(returned);
 
         verify(compensator).compensate(3L, 4L, "unroutable: NO_ROUTE");
+    }
+
+    @Test
+    void unroutableReplayKeepsPendingRecordWithoutReleasingReservation() {
+        MessageProperties properties = new MessageProperties();
+        properties.setHeader(SeckillCorrelationData.HEADER_ACTIVITY_ID, 3L);
+        properties.setHeader(SeckillCorrelationData.HEADER_USER_ID, 4L);
+        properties.setHeader(SeckillCorrelationData.HEADER_COMPENSATE_ON_FAILURE, false);
+        ReturnedMessage returned = new ReturnedMessage(
+                new Message(new byte[0], properties),
+                312,
+                "NO_ROUTE",
+                "seckill.exchange",
+                "wrong.key");
+
+        handler.returnedMessage(returned);
+
+        verify(compensator, never()).compensate(3L, 4L, "unroutable: NO_ROUTE");
     }
 }

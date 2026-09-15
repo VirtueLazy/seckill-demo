@@ -36,6 +36,7 @@ public class SecurityConfig {
              .authorizeHttpRequests(auth->auth
                  .requestMatchers("/api/user/register","/api/user/login","/api/test/redis").permitAll()
                  .requestMatchers("/api/seckill/preload/**").hasRole("ADMIN")
+                 .requestMatchers("/api/seckill/failures/**").hasRole("ADMIN")
                  .requestMatchers(HttpMethod.POST, "/api/product/add").hasRole("ADMIN")
                  .requestMatchers(HttpMethod.PUT, "/api/product/**").hasRole("ADMIN")
                  .requestMatchers(HttpMethod.DELETE, "/api/product/**").hasRole("ADMIN")

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/VirtueLazy/seckill-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/VirtueLazy/seckill-demo/actions/workflows/ci.yml)
 
-基于 Spring Boot 4.1.1、Redis、RabbitMQ 和 MySQL 实现的秒杀可靠性练习项目，重点验证并发场景中的超卖、重复下单、异步落库和发布失败补偿。项目保留已知边界，不宣称达到生产级高可用。
+基于 Spring Boot 4.1.1、Redis、RabbitMQ 和 MySQL 实现的秒杀可靠性练习项目，重点验证并发场景中的超卖、重复下单、异步落库、发布失败补偿和死信重放。项目保留已知边界，不宣称达到生产级高可用。
 
 ## 技术栈
 
@@ -23,6 +23,9 @@
   -> 携带关联信息发送 RabbitMQ 消息
      -> Broker NACK / 无法路由：幂等 Lua 恢复库存与购买资格
   -> 消费者事务内扣减数据库库存并创建订单
+     -> 失败消息进入 DLQ，先持久化再 ACK
+        -> 管理员对账或重放
+        -> 重放消费成功后将失败记录标记为 RESOLVED
 ```
 
 ## 核心设计
@@ -57,6 +60,15 @@ Redis 负责挡住高并发请求，数据库条件更新作为最后一道库�
 
 这套补偿处理的是“明确失败”。如果 Broker 实际收到了消息，但应用在收到确认前发生网络中断，结果仍具有歧义，生产系统需要预约状态、持久化事件或定时对账进一步兜底。
 
+### 死信持久化、重放与对账
+
+- DLQ 消费者先将失败消息写入 `seckill_failed_message`，写入成功后才 ACK；数据库不可用时 NACK 并保留消息。
+- `(activity_id, user_id)` 唯一索引使重复死信幂等落库，已解决记录不会被迟到的重复死信重新打开。
+- 管理员可查询待处理记录、手动重放，或扫描订单表完成状态对账。
+- 数据库条件更新原子抢占重放权，同一记录 30 秒内只能重放一次，避免连续点击造成消息风暴。
+- 重放消息携带失败记录 ID；订单事务成功或发现订单已存在时，将记录标记为 `RESOLVED`。
+- 重放发布失败时记录仍保持 `PENDING`，不会恢复 Redis 预约，避免旧消息与用户新请求同时下单。
+
 ### 权限与配置
 
 - 普通用户可以参加秒杀和查询商品。
@@ -75,6 +87,8 @@ mvn spring-boot:run
 
 `compose.yaml` 会启动 MySQL、Redis 和 RabbitMQ，`db/schema.sql` 会初始化完整表结构与示例活动。RabbitMQ 管理页面为 `http://localhost:15672`。
 
+如果本地已有旧版 MySQL 数据卷，初始化脚本不会再次执行。请手动创建 `seckill_failed_message` 表，或在确认不需要保留本地数据后执行 `docker compose down -v`，再重新启动环境。
+
 生产或共享环境不要使用仓库中的开发默认密码。环境变量示例见 `.env.example`。
 
 ## 主要接口
@@ -83,6 +97,9 @@ mvn spring-boot:run
 - `POST /api/user/login`：登录并获取 JWT
 - `POST /api/seckill/preload/{activityId}`：管理员预热库存
 - `POST /api/seckill/{activityId}`：发起秒杀
+- `GET /api/seckill/failures`：管理员查询待处理死信
+- `POST /api/seckill/failures/{failedMessageId}/replay`：管理员重放单条死信
+- `POST /api/seckill/failures/reconcile`：管理员将已有订单对应的死信标记为已解决
 - `GET /api/product/list`：商品列表
 
 除注册和登录外，请求需要携带 `Authorization: Bearer <token>`。新注册用户默认为 `USER`；将数据库中的角色改为 `ADMIN` 后，需要重新登录获取 Token。
@@ -95,6 +112,10 @@ mvn test
 
 - `SeckillReservationCompensatorTest`：验证重复补偿只恢复一次预约。
 - `SeckillPublishFailureHandlerTest`：验证 Broker NACK、正常 ACK 和无法路由三种发布结果。
+- `SeckillMessagePublisherTest`：验证重放标记与业务关联信息正确写入消息。
+- `SeckillConsumerTest`：验证死信持久化成功才 ACK，落库失败会重新入队。
+- `SeckillFailureServiceTest`：验证死信落库、重放限频、已有订单对账和批量对账。
+- `FailedSeckillMessageMapperTest`：连接 MySQL 验证幂等写入、原子重放抢占和终态保护。
 - `SeckillServiceImplTest`：验证同步发布异常会撤销预约，并且不会向调用方返回成功。
 - `SeckillConcurrentTest`：需要先启动完整环境的并发验证程序；它验证 Redis 接受数不超过库存，但还不是正式性能报告。
 
@@ -104,9 +125,9 @@ GitHub Actions 会启动 MySQL、Redis、RabbitMQ 并执行 Maven 测试。仓�
 
 这是一个便于学习和面试讲解的基础版本，不宣称已经达到生产级可靠性：
 
-- 网络中断可能产生“Broker 已接收但应用未收到确认”的歧义结果，目前依赖日志人工对账。
+- 网络中断可能产生“Broker 已接收但应用未收到确认”的歧义结果；订单侧已有人工对账入口，但 Redis 预约仍缺少完整状态机。
 - 如果发布回调执行补偿时 Redis 不可用，目前只记录错误，没有持久化补偿任务。
-- 死信消费者目前记录错误后 ACK，没有后台重放功能。
+- 死信支持持久化、人工对账与手动重放，但尚未实现告警和安全的自动重试调度。
 - 现有并发程序属于功能验证，不是正式的高并发性能报告。
 
 这些边界可以作为后续学习方向，但不建议在尚未掌握时直接堆入项目。

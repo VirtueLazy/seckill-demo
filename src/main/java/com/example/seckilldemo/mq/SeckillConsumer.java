@@ -8,6 +8,7 @@ import com.example.seckilldemo.entity.SeckillOrder;
 import com.example.seckilldemo.exception.DuplicateOrderException;
 import com.example.seckilldemo.mapper.SeckillActivityMapper;
 import com.example.seckilldemo.mapper.SeckillOrderMapper;
+import com.example.seckilldemo.service.SeckillFailureService;
 import com.rabbitmq.client.Channel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -26,13 +27,16 @@ public class SeckillConsumer {
     private final SeckillActivityMapper seckillActivityMapper;
     private final SeckillOrderMapper seckillOrderMapper;
     private final TransactionTemplate transactionTemplate;
+    private final SeckillFailureService failureService;
 
     public SeckillConsumer(SeckillActivityMapper seckillActivityMapper,
                            SeckillOrderMapper seckillOrderMapper,
-                           PlatformTransactionManager transactionManager) {
+                           PlatformTransactionManager transactionManager,
+                           SeckillFailureService failureService) {
         this.seckillActivityMapper = seckillActivityMapper;
         this.seckillOrderMapper = seckillOrderMapper;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.failureService = failureService;
     }
 
     @RabbitListener(queues = RabbitMQConfig.SECKILL_QUEUE)
@@ -42,6 +46,7 @@ public class SeckillConsumer {
             // 数据库操作放独立事务：事务提交成功后才 ACK，避免"先确认后回滚"导致丢消息
             transactionTemplate.execute(status -> {
                 createOrder(message);
+                failureService.markResolved(message);
                 return null;
             });
             channel.basicAck(deliveryTag, false);
@@ -49,7 +54,13 @@ public class SeckillConsumer {
         } catch (DuplicateOrderException e) {
             // 重复订单是"业务上已成功"：ACK 掉，不重试
             log.warn("重复订单，视为已处理：userId={}，activityId={}", message.getUserId(), message.getActivityId());
-            channel.basicAck(deliveryTag, false);
+            try {
+                failureService.markResolved(message);
+                channel.basicAck(deliveryTag, false);
+            } catch (Exception resolveFailure) {
+                log.error("订单已存在但死信记录更新失败，消息重新进入死信队列", resolveFailure);
+                channel.basicNack(deliveryTag, false, false);
+            }
         } catch (Exception e) {
             // 真正的失败：不重投原队列（避免死循环），转投死信队列人工排查
             log.error("消息处理失败，进入死信队列：userId={}，activityId={}", message.getUserId(), message.getActivityId(), e);
@@ -89,12 +100,19 @@ public class SeckillConsumer {
         }
     }
 
-    // 死信队列监听：留痕，供人工处理
+    // 死信先持久化再 ACK，避免原实现记录日志后直接丢失消息。
     @RabbitListener(queues = RabbitMQConfig.SECKILL_DLQ)
     public void handleDeadLetter(SeckillMessage message, Channel channel,
                                  @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) throws IOException {
-        log.error("死信队列收到消息，需人工处理：userId={}，activityId={}",
-                message.getUserId(), message.getActivityId());
-        channel.basicAck(deliveryTag, false);
+        try {
+            failureService.recordDeadLetter(message, "消费者处理失败，消息被拒绝进入死信队列");
+            channel.basicAck(deliveryTag, false);
+            log.error("死信消息已持久化：userId={}，activityId={}",
+                    message.getUserId(), message.getActivityId());
+        } catch (Exception persistFailure) {
+            log.error("死信持久化失败，消息保留在队列等待重试：userId={}，activityId={}",
+                    message.getUserId(), message.getActivityId(), persistFailure);
+            channel.basicNack(deliveryTag, false, true);
+        }
     }
 }

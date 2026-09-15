@@ -48,6 +48,21 @@ CREATE TABLE IF NOT EXISTS `seckill_order` (
   UNIQUE KEY `uk_activity_user` (`seckill_activity_id`, `user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS `seckill_failed_message` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `activity_id` BIGINT NOT NULL,
+  `user_id` BIGINT NOT NULL,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+  `retry_count` INT NOT NULL DEFAULT 0,
+  `last_error` VARCHAR(500) DEFAULT NULL,
+  `last_replay_time` DATETIME DEFAULT NULL,
+  `created_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_failed_activity_user` (`activity_id`, `user_id`),
+  KEY `idx_failed_status_created` (`status`, `created_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 INSERT INTO `product` (`id`, `name`, `price`, `stock`, `description`)
 VALUES (1, 'Demo Product', 199.00, 100, 'Local development sample')
 ON DUPLICATE KEY UPDATE `name` = VALUES(`name`);

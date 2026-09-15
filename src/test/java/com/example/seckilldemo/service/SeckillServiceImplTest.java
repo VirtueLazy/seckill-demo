@@ -1,9 +1,9 @@
 package com.example.seckilldemo.service;
 
-import com.example.seckilldemo.config.RabbitMQConfig;
 import com.example.seckilldemo.dto.SeckillMessage;
 import com.example.seckilldemo.exception.BusinessException;
 import com.example.seckilldemo.mapper.SeckillActivityMapper;
+import com.example.seckilldemo.mq.SeckillMessagePublisher;
 import com.example.seckilldemo.service.impl.SeckillServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -11,9 +11,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.amqp.AmqpException;
-import org.springframework.amqp.core.MessagePostProcessor;
-import org.springframework.amqp.rabbit.connection.CorrelationData;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -24,7 +21,6 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -34,7 +30,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class SeckillServiceImplTest {
     @Mock
-    private RabbitTemplate rabbitTemplate;
+    private SeckillMessagePublisher seckillMessagePublisher;
     @Mock
     private SeckillActivityMapper seckillActivityMapper;
     @Mock
@@ -67,13 +63,8 @@ class SeckillServiceImplTest {
                 eq("2"), eq("0"), eq(String.valueOf(Long.MAX_VALUE)), anyString()))
                 .thenReturn(0L);
         doThrow(new AmqpException("connection unavailable"))
-                .when(rabbitTemplate)
-                .convertAndSend(
-                        eq(RabbitMQConfig.SECKILL_EXCHANGE),
-                        eq(RabbitMQConfig.SECKILL_ROUTING_KEY),
-                        any(SeckillMessage.class),
-                        any(MessagePostProcessor.class),
-                        any(CorrelationData.class));
+                .when(seckillMessagePublisher)
+                .publish(new SeckillMessage(1L, 2L), true);
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
