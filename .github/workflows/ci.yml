@@ -19,10 +19,65 @@ jobs:
       - name: Start dependencies
         run: docker compose up -d --wait
       - name: Run tests
-        run: mvn --batch-mode --no-transfer-progress test
+        run: mvn --batch-mode --no-transfer-progress verify
+      - name: Run concurrent correctness smoke test
+        shell: bash
+        run: |
+          docker compose exec -T mysql mysql -useckill -pseckill_dev_password seckill_demo -e "
+            DELETE FROM seckill_failed_message WHERE activity_id = 1;
+            DELETE FROM seckill_order WHERE seckill_activity_id = 1;
+            UPDATE seckill_activity SET seckill_stock = 10 WHERE id = 1;"
+          docker compose exec -T redis redis-cli DEL seckill:stock:1 seckill:window:1 seckill:purchased:1
+          docker compose exec -T redis redis-cli SET seckill:stock:1 10
+          docker compose exec -T redis redis-cli HSET seckill:window:1 start 0 end 4102444799
+
+          java -jar target/seckill-demo-0.0.1-SNAPSHOT.jar > application.log 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8080/api/test/redis > /dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "Application did not become ready"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          mvn --batch-mode --no-transfer-progress \
+            -Dtest=SeckillConcurrentTest \
+            -Dseckill.load.enabled=true \
+            -Dseckill.users=20 \
+            -Dseckill.stock=10 test
+
+          order_count=0
+          for attempt in {1..30}; do
+            order_count=$(docker compose exec -T mysql mysql -useckill -pseckill_dev_password \
+              -Nse "SELECT COUNT(*) FROM seckill_demo.seckill_order WHERE seckill_activity_id = 1")
+            [ "$order_count" -eq 10 ] && break
+            sleep 1
+          done
+          duplicate_count=$(docker compose exec -T mysql mysql -useckill -pseckill_dev_password \
+            -Nse "SELECT COUNT(*) FROM (SELECT user_id FROM seckill_demo.seckill_order WHERE seckill_activity_id = 1 GROUP BY user_id HAVING COUNT(*) > 1) duplicate_orders")
+          database_stock=$(docker compose exec -T mysql mysql -useckill -pseckill_dev_password \
+            -Nse "SELECT seckill_stock FROM seckill_demo.seckill_activity WHERE id = 1")
+          pending_dead_letters=$(docker compose exec -T mysql mysql -useckill -pseckill_dev_password \
+            -Nse "SELECT COUNT(*) FROM seckill_demo.seckill_failed_message WHERE activity_id = 1 AND status = 'PENDING'")
+          redis_stock=$(docker compose exec -T redis redis-cli GET seckill:stock:1)
+
+          echo "orders=$order_count duplicates=$duplicate_count db_stock=$database_stock redis_stock=$redis_stock pending_dlq=$pending_dead_letters"
+          [ "$order_count" -eq 10 ]
+          [ "$duplicate_count" -eq 0 ]
+          [ "$database_stock" -eq 0 ]
+          [ "$redis_stock" -eq 0 ]
+          [ "$pending_dead_letters" -eq 0 ]
       - name: Show dependency logs on failure
         if: failure()
         run: docker compose logs --no-color
+      - name: Show application log on failure
+        if: failure()
+        run: cat application.log || true
       - name: Stop dependencies
         if: always()
         run: docker compose down -v

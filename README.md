@@ -121,7 +121,7 @@ mvn test
 
 仓库还提供了 [k6 压测场景](performance/README.md)，包含隔离环境数据重置、不同并发档位、结果导出和订单/库存/死信核验 SQL。压测结果不会预先写入仓库，避免把其他机器的数据包装成本项目容量。
 
-GitHub Actions 会启动 MySQL、Redis、RabbitMQ 并执行 Maven 测试。仓库中的通过状态是可复现的功能验证，不代表线上容量。
+GitHub Actions 会启动 MySQL、Redis、RabbitMQ，执行 Maven 测试，并运行“20 个独立用户抢 10 件库存”的并发冒烟；流水线会核验最终订单数、重复订单、双端库存和待处理死信。仓库中的通过状态是可复现的正确性验证，不代表线上容量。
 
 ## 已知边界
 
