@@ -117,7 +117,9 @@ mvn test
 - `SeckillFailureServiceTest`：验证死信落库、重放限频、已有订单对账和批量对账。
 - `FailedSeckillMessageMapperTest`：连接 MySQL 验证幂等写入、原子重放抢占和终态保护。
 - `SeckillServiceImplTest`：验证同步发布异常会撤销预约，并且不会向调用方返回成功。
-- `SeckillConcurrentTest`：需要先启动完整环境的并发验证程序；它验证 Redis 接受数不超过库存，但还不是正式性能报告。
+- `SeckillConcurrentTest`：显式开启后，以不同用户同时请求并输出分类结果和 P50/P95/P99，验证 Redis 受理数不超过库存。
+
+仓库还提供了 [k6 压测场景](performance/README.md)，包含隔离环境数据重置、不同并发档位、结果导出和订单/库存/死信核验 SQL。压测结果不会预先写入仓库，避免把其他机器的数据包装成本项目容量。
 
 GitHub Actions 会启动 MySQL、Redis、RabbitMQ 并执行 Maven 测试。仓库中的通过状态是可复现的功能验证，不代表线上容量。
 
