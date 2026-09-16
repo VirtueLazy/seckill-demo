@@ -52,8 +52,13 @@ export function setup() {
       JSON.stringify({ username, password }),
       { headers: { 'Content-Type': 'application/json' }, tags: { operation: 'setup-login' } },
     );
-    const body = loginResponse.json();
-    const token = typeof body === 'string' ? body : body.data;
+    let token;
+    try {
+      const body = loginResponse.json();
+      token = typeof body === 'string' ? body : body.data;
+    } catch (_) {
+      token = loginResponse.body.trim();
+    }
     if (loginResponse.status >= 400 || !token) {
       throw new Error(`login failed for ${username}: ${loginResponse.body}`);
     }

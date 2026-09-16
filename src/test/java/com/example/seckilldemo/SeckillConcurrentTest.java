@@ -45,6 +45,15 @@ public class SeckillConcurrentTest {
         assertEquals(0L, percentile(List.of(), 95));
     }
 
+    @Test
+    void extractsTokenFromJsonOrPlainText() {
+        ObjectMapper mapper = new ObjectMapper();
+
+        assertEquals("token-a", extractToken(mapper, "\"token-a\""));
+        assertEquals("token-b", extractToken(mapper, "token-b"));
+        assertEquals("token-c", extractToken(mapper, "{\"data\":\"token-c\"}"));
+    }
+
     public static void main(String[] args) throws Exception {
         runScenario();
     }
@@ -185,11 +194,21 @@ public class SeckillConcurrentTest {
                         .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(node)))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
-        JsonNode body = mapper.readTree(response.body());
-        String token = body.isTextual() ? body.asText() : body.path("data").asText();
+        String token = extractToken(mapper, response.body());
         if (response.statusCode() >= 400 || token.isBlank()) {
             throw new IllegalStateException("登录失败: " + response.body());
         }
         return token;
+    }
+
+    private static String extractToken(ObjectMapper mapper, String responseBody) {
+        String trimmedBody = responseBody.trim();
+        try {
+            JsonNode body = mapper.readTree(trimmedBody);
+            return body.isTextual() ? body.asText() : body.path("data").asText();
+        } catch (Exception nonJsonResponse) {
+            // String 返回值可能由 Spring MVC 以 text/plain 直接输出 JWT。
+            return trimmedBody;
+        }
     }
 }
