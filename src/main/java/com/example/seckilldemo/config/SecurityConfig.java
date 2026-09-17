@@ -34,7 +34,7 @@ public class SecurityConfig {
              .csrf(csrf-> csrf.disable())
              .sessionManagement(session->session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
              .authorizeHttpRequests(auth->auth
-                 .requestMatchers("/api/user/register","/api/user/login","/api/test/redis").permitAll()
+                 .requestMatchers("/api/user/register", "/api/user/login").permitAll()
                  .requestMatchers("/api/seckill/preload/**").hasRole("ADMIN")
                  .requestMatchers("/api/seckill/failures/**").hasRole("ADMIN")
                  .requestMatchers(HttpMethod.POST, "/api/product/add").hasRole("ADMIN")
