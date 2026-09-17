@@ -3,9 +3,8 @@ package com.example.seckilldemo.service.impl;
 import com.example.seckilldemo.entity.Product;
 import com.example.seckilldemo.mapper.ProductMapper;
 import com.example.seckilldemo.service.ProductService;
-import org.apache.ibatis.logging.stdout.StdOutImpl;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
@@ -14,6 +13,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @Service
+@Slf4j
 public class ProductServiceImpl implements ProductService {
     @Autowired
     private ProductMapper productMapper;
@@ -40,7 +40,7 @@ public class ProductServiceImpl implements ProductService {
 
         String cachedJson = stringRedisTemplate.opsForValue().get(cacheKey);
         if (cachedJson != null) {
-            System.out.println("命中缓存: " + cacheKey);
+            log.debug("商品缓存命中: {}", cacheKey);
             try {
                 return objectMapper.readValue(cachedJson, Product.class);
             } catch (Exception e){
@@ -48,7 +48,7 @@ public class ProductServiceImpl implements ProductService {
             }
         }
 
-        System.out.println("未命中缓存，查数据库："+cacheKey);
+        log.debug("商品缓存未命中，查询数据库: {}", cacheKey);
         Product product = productMapper.selectById(id);
 
         if (product!=null){
@@ -69,7 +69,7 @@ public class ProductServiceImpl implements ProductService {
         if (success) {
             String cacheKey = "product:"+product.getId();
             stringRedisTemplate.delete(cacheKey);
-            System.out.println("已删除缓存："+cacheKey);
+            log.debug("商品更新后删除缓存: {}", cacheKey);
         }
 
         return success;
@@ -82,7 +82,7 @@ public class ProductServiceImpl implements ProductService {
         if (success) {
             String cacheKey = "product:"+id;
             stringRedisTemplate.delete(cacheKey);
-            System.out.println("已删除缓存："+cacheKey);
+            log.debug("商品删除后清理缓存: {}", cacheKey);
         }
 
         return success;
